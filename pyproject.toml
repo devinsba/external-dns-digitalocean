@@ -1,0 +1,28 @@
+[project]
+name = "external-dns-digitalocean"
+version = "0.1.0"
+description = "external-dns webhook provider for DigitalOcean DNS"
+requires-python = ">=3.14"
+dependencies = [
+    "opentelemetry-api>=1.45.2",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.2",
+    "opentelemetry-instrumentation-logging>=0.66b2",
+    "opentelemetry-instrumentation-urllib>=0.66b2",
+    "opentelemetry-sdk>=1.45.2",
+]
+
+[project.scripts]
+external-dns-digitalocean = "external_dns_digitalocean.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
