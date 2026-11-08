@@ -16,6 +16,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+    outputs:
+      draft: ${{ steps.release.outputs.draft }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -42,6 +44,38 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - run: gh release create "$GITHUB_REF_NAME" --generate-notes
+      # Draft first; the notes job fills it in and finalize publishes it.
+      # A release made by hand in the UI already exists: leave it alone.
+      - id: release
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          echo "draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notes:
+    needs: publish
+    if: needs.publish.outputs.draft == 'true'
+    # Caller permissions must cover every job in the reusable workflow
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: read
+      copilot-requests: write
+    uses: ./.github/workflows/release-notes.lock.yml
+    with:
+      tag: ${{ github.ref_name }}
+
+  finalize:
+    needs: [publish, notes]
+    # Publish even if the agent failed (the generated notes are the fallback); not if the image push failed
+    if: always() && needs.publish.result == 'success' && needs.publish.outputs.draft == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: gh release edit "$GITHUB_REF_NAME" --draft=false --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
