@@ -1,117 +1,65 @@
 import json
-import logging
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from opentelemetry import propagate, trace
-from opentelemetry.trace import SpanKind, Status, StatusCode
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from .provider import Provider
 
-log = logging.getLogger(__name__)
-
-tracer = trace.get_tracer(__name__)
+# FastAPI ships its own OTel; we use the contrib instrumentor instead, so turn it off.
+NO_NATIVE_OTEL = {"tracing": False, "metrics": False, "logs": False, "operation_spans": False}
 MEDIA_TYPE = "application/external.dns.webhook+json;version=1"
 
 
-class BadRequest(Exception):
-    pass
+def _reply(body: Any) -> Response:
+    return Response(json.dumps(body), media_type=MEDIA_TYPE)
 
 
-class _Handler(BaseHTTPRequestHandler):
-    provider: Provider
+async def _body(request: Request) -> Any:
+    try:
+        return json.loads(await request.body())
+    except ValueError as e:  # includes JSONDecodeError and UnicodeDecodeError
+        raise HTTPException(400, str(e)) from e
 
-    def log_message(self, format: str, *args: Any) -> None:
-        log.debug("%s %s", self.address_string(), format % args)
 
-    def _reply(self, status: int, body: Any = None) -> None:
-        self._status = status
-        data = b"" if body is None else json.dumps(body).encode()
-        self.send_response(status)
-        if body is not None:
-            self.send_header("Content-Type", MEDIA_TYPE)
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+def make_provider_app(provider: Provider) -> FastAPI:
+    app = FastAPI(
+        openapi_url=None, telemetry=NO_NATIVE_OTEL
+    )  # no docs routes; this API is only for external-dns
 
-    def _body(self) -> Any:
-        try:
-            return json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
-        except ValueError as e:  # includes JSONDecodeError and UnicodeDecodeError
-            raise BadRequest(str(e)) from e
+    @app.get("/")
+    def negotiate() -> Response:
+        include = provider.domain_filter()
+        return _reply({"include": include} if include else {})
 
-    def _route(self) -> None:
-        routes = {
-            ("GET", "/"): lambda: self._reply(200, self._negotiate()),
-            ("GET", "/records"): lambda: self._reply(200, self.provider.records()),
-            ("POST", "/records"): self._apply,
-            ("POST", "/adjustendpoints"): lambda: self._reply(200, self._body()),
-        }
-        path = self.path.split("?")[0]
-        known = path in {p for _, p in routes}
-        # Unknown paths get no route in the name/attributes to keep cardinality bounded.
-        name = f"{self.command} {path}" if known else self.command
-        attrs = {"http.request.method": self.command, "url.path": path}
-        if known:
-            attrs["http.route"] = path
-        with tracer.start_as_current_span(
-            name,
-            context=propagate.extract(self.headers),
-            kind=SpanKind.SERVER,
-            attributes=attrs,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
-            self._status = 500
-            try:
-                self._dispatch(known, routes.get((self.command, path)))
-            except BadRequest:
-                log.exception("Bad request body")
-                self._reply(400)
-            except Exception as e:
-                log.exception("Request failed")
-                span.record_exception(e)
-                self._reply(500)
-            span.set_attribute("http.response.status_code", self._status)
-            if self._status >= 500:
-                span.set_status(Status(StatusCode.ERROR))
+    # Sync handlers run in a threadpool (the provider does blocking urllib I/O).
+    @app.get("/records")
+    def records() -> Response:
+        return _reply(provider.records())
 
-    def _dispatch(self, known: bool, handler: Any) -> None:
-        if not known:
-            self._reply(404)
-        elif handler is None:
-            self._reply(400)
-        else:
-            handler()
-
-    def _negotiate(self) -> dict:
-        include = self.provider.domain_filter()
-        return {"include": include} if include else {}
-
-    def _apply(self) -> None:
-        changes = self._body()
+    @app.post("/records")
+    async def apply(request: Request) -> Response:
+        changes = await _body(request)
         if not isinstance(changes, dict):
-            raise BadRequest("changes must be an object")
-        self.provider.apply(changes)
-        self._reply(204)
+            raise HTTPException(400, "changes must be an object")
+        await run_in_threadpool(provider.apply, changes)
+        return Response(status_code=204)
 
-    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _route
+    @app.post("/adjustendpoints")
+    async def adjust(request: Request) -> Response:
+        return _reply(await _body(request))
 
-
-class _HealthHandler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: Any) -> None:
-        pass
-
-    def do_GET(self) -> None:
-        self.send_response(200 if self.path == "/healthz" else 404)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+    FastAPIInstrumentor.instrument_app(app)
+    return app
 
 
-def make_provider_server(provider: Provider, host: str, port: int) -> ThreadingHTTPServer:
-    handler = type("Handler", (_Handler,), {"provider": provider})
-    return ThreadingHTTPServer((host, port), handler)
+def make_health_app() -> FastAPI:
+    # Not instrumented: probes would only add noise.
+    app = FastAPI(openapi_url=None, telemetry=NO_NATIVE_OTEL)
 
+    @app.get("/healthz")
+    def healthz() -> Response:
+        return Response()
 
-def make_health_server(host: str, port: int) -> ThreadingHTTPServer:
-    return ThreadingHTTPServer((host, port), _HealthHandler)
+    return app

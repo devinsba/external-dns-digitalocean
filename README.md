@@ -44,9 +44,10 @@ provider:
 
 ## Telemetry
 
-Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces and metrics over OTLP/HTTP; with it unset nothing is exported. Logs are not exported (stdout only), but every log line carries `trace_id=` and `span_id=` for correlation.
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces and metrics over OTLP/HTTP; with it unset nothing is exported. Logs are not exported (stdout only), but logs are structured JSON (structlog) and every line inside a request carries `trace_id` and `span_id` for correlation.
 
-- Traces: a `SERVER` span per webhook request (`GET /records`, ... ; `/healthz` is not traced) continuing any incoming `traceparent`, with `CLIENT` child spans for each DigitalOcean API call.
+- Traces: a `SERVER` span per webhook request (`GET /records`, ... ; `/healthz` is not traced) continuing any incoming `traceparent`, with `CLIENT` child spans for each DigitalOcean API call. The server is FastAPI/uvicorn, via `opentelemetry-instrumentation-fastapi` (FastAPI's own OTel is disabled).
+- Metrics: `http.server.request.duration` and `http.server.active_requests` (FastAPI), `http.client.request.duration` (DigitalOcean calls, via `requests`), and `system.*` / `process.*` (system-metrics instrumentation).
 - Metrics: counter `dns.record.changes` (`{change}`) with attributes `action` (create/update/delete), `record_type`, `zone`.
 
 ## Development

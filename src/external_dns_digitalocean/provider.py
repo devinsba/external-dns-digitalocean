@@ -1,11 +1,11 @@
 """Port of external-dns v0.20's in-tree DigitalOcean provider (with bug fixes)."""
 
-import logging
 from typing import Any, Protocol
 
+import structlog
 from opentelemetry import metrics
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 changes_counter = metrics.get_meter(__name__).create_counter(
     "dns.record.changes", unit="{change}", description="DNS record changes applied"
 )
@@ -71,7 +71,7 @@ def _edit_body(zone: str, dns_name: str, record_type: str, target: str, ttl: int
             body["priority"] = int(prio)
             body["data"] = host if host.endswith(".") else host + "."
         except ValueError:
-            log.warning("Unable to parse MX target %r for %s", target, dns_name)
+            log.warning("unparseable_mx_target", target=target, dns_name=dns_name)
     return body
 
 
@@ -123,7 +123,7 @@ class Provider:
             for ep in eps or []:
                 cands = [z for z in zones if _in_zone(ep["dnsName"], z)]
                 if not cands:
-                    log.info("Skipping %s: no matching zone", ep["dnsName"])
+                    log.info("skip_no_matching_zone", dns_name=ep["dnsName"])
                     continue
                 out.append((max(cands, key=len), ep))
             return out
@@ -163,14 +163,18 @@ class Provider:
             )
 
         for zone, body in creates:
-            log.info("Creating %s %s %s in %s", body["type"], body["name"], body["data"], zone)
+            log.info(
+                "create_record", type=body["type"], name=body["name"], data=body["data"], zone=zone
+            )
             self.client.create_record(zone, body)
             _count("create", body["type"], zone)
         for zone, rid, body in updates:
-            log.info("Updating %s %s %s in %s", body["type"], body["name"], body["data"], zone)
+            log.info(
+                "updat_record", type=body["type"], name=body["name"], data=body["data"], zone=zone
+            )
             self.client.edit_record(zone, rid, body)
             _count("update", body["type"], zone)
         for zone, r in deletes:
-            log.info("Deleting %s %s %s in %s", r["type"], r["name"], r["data"], zone)
+            log.info("delet_record", type=r["type"], name=r["name"], data=r["data"], zone=zone)
             self.client.delete_record(zone, r["id"])
             _count("delete", r["type"], zone)
