@@ -60,4 +60,4 @@ uv run pytest
 
 ## Releasing
 
-Push a `vX.Y.Z` tag. CI runs, then a multi-arch image is pushed to `ghcr.io/devinsba/external-dns-digitalocean` and a GitHub Release is created.
+Push a `vX.Y.Z` tag. CI runs, then a multi-arch image is pushed to `ghcr.io/devinsba/external-dns-digitalocean` and a draft GitHub Release is created. An AI agent (the Release Notes workflow) then writes the notes into the draft and the release is published; if the agent fails, the release is published with GitHub's generated notes. To regenerate the notes of a release, run the Release Notes workflow manually with the tag.
