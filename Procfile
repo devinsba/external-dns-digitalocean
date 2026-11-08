@@ -1,0 +1,1 @@
+web: external-dns-digitalocean
