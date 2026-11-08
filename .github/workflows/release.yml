@@ -42,6 +42,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - run: gh release create "$GITHUB_REF_NAME" --generate-notes
+      # A release made in the GitHub UI creates the tag too; keep its notes
+      - run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
