@@ -20,7 +20,8 @@ _tp = TracerProvider()
 _tp.add_span_processor(SimpleSpanProcessor(SPAN_EXPORTER))
 trace.set_tracer_provider(_tp)
 metrics.set_meter_provider(MeterProvider(metric_readers=[METRIC_READER]))
-telemetry.setup()  # no endpoint set: leaves our providers alone, instruments urllib/logging
+telemetry.setup()  # no endpoint set: leaves our providers alone, instruments requests
+telemetry.configure_logging("INFO")
 
 
 @pytest.fixture(autouse=True)

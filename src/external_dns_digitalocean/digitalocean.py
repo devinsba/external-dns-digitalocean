@@ -1,7 +1,6 @@
-import json
-import urllib.error
-import urllib.request
 from typing import Any
+
+import requests
 
 
 class DOError(Exception):
@@ -15,24 +14,22 @@ class DigitalOceanClient:
         self.timeout = timeout
 
     def _request(self, method: str, url: str, body: dict | None = None) -> Any:
-        req = urllib.request.Request(
-            url,
-            method=method,
-            data=json.dumps(body).encode() if body is not None else None,
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-                "User-Agent": "external-dns-digitalocean",
-            },
-        )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read()
-        except urllib.error.HTTPError as e:
-            raise DOError(f"{method} {url} -> {e.code}: {e.read().decode(errors='replace')}") from e
-        except urllib.error.URLError as e:
-            raise DOError(f"{method} {url} failed: {e.reason}") from e
-        return json.loads(raw) if raw else None
+            resp = requests.request(
+                method,
+                url,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "User-Agent": "external-dns-digitalocean",
+                },
+                timeout=self.timeout,
+            )
+        except requests.RequestException as e:
+            raise DOError(f"{method} {url} failed: {e}") from e
+        if not resp.ok:
+            raise DOError(f"{method} {url} -> {resp.status_code}: {resp.text}")
+        return resp.json() if resp.content else None
 
     def _list(self, path: str, key: str) -> list[dict]:
         items: list[dict] = []

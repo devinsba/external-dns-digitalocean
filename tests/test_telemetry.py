@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 
@@ -11,7 +12,7 @@ from opentelemetry.sdk.trace import TracerProvider
 print(isinstance(tp, TracerProvider))
 if isinstance(tp, TracerProvider):
     print(tp.resource.attributes["service.name"])
-logging.basicConfig(format=telemetry.LOG_FORMAT, level=logging.INFO)
+telemetry.configure_logging("INFO")
 logging.getLogger("x").info("hello")
 """
 
@@ -31,7 +32,9 @@ def run(**env):
 def test_noop_without_endpoint():
     r = run()
     assert r.stdout.splitlines()[0] == "False"
-    assert "trace_id=0" in r.stderr  # formatted fine even with no active span
+    log = json.loads(r.stderr.splitlines()[-1])  # stdlib records come out as JSON too
+    assert (log["event"], log["level"], log["logger"]) == ("hello", "info", "x")
+    assert "trace_id" not in log  # no active span
 
 
 def test_sdk_with_endpoint_and_default_service_name():
